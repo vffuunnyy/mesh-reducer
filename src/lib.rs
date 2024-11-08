@@ -14,29 +14,24 @@ struct PointWithNormal {
 }
 
 fn read_stl_points(file_path: PathBuf) -> IoResult<Vec<PointWithNormal>> {
-    let file = File::open(file_path)?;
+    let file = File::open(&file_path)?;
     let mut reader = BufReader::new(file);
     let mesh = read_stl(&mut reader)?;
-    let vertices = mesh.vertices.clone();
+    let vertices = &mesh.vertices;
 
-    let points_with_normals = mesh
-        .faces
-        .into_iter()
-        .flat_map(move |face| {
-            let normal = face.normal;
-            let vertices_clone = vertices.clone();
-            face.vertices
-                .iter()
-                .map(move |&idx| {
-                    let vertex = vertices_clone[idx];
-                    PointWithNormal {
-                        point: [vertex[0] as f64, vertex[1] as f64, vertex[2] as f64],
-                        normal: [normal[0] as f64, normal[1] as f64, normal[2] as f64],
-                    }
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect();
+    let mut points_with_normals = Vec::with_capacity(mesh.faces.len() * 3);
+
+    for face in &mesh.faces {
+        let normal = face.normal;
+        for &idx in &face.vertices {
+            let vertex = vertices[idx];
+            points_with_normals.push(PointWithNormal {
+                point: [vertex[0] as f64, vertex[1] as f64, vertex[2] as f64],
+                normal: [normal[0] as f64, normal[1] as f64, normal[2] as f64],
+            });
+        }
+    }
+
     Ok(points_with_normals)
 }
 
