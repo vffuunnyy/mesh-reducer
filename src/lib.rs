@@ -1,7 +1,10 @@
+use dashmap::DashMap;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use rayon::prelude::*;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Result as IoResult};
 use std::path::PathBuf;
@@ -9,29 +12,81 @@ use stl_io::read_stl;
 
 #[derive(Clone, Debug)]
 struct PointWithNormal {
-    point: [f64; 3],
-    normal: [f64; 3],
+    point: [f32; 3],
+    normal: [f32; 3],
 }
 
 fn read_stl_points(file_path: PathBuf) -> IoResult<Vec<PointWithNormal>> {
+    let t = std::time::Instant::now();
     let file = File::open(&file_path)?;
     let mut reader = BufReader::new(file);
     let mesh = read_stl(&mut reader)?;
     let vertices = &mesh.vertices;
 
-    let mut points_with_normals = Vec::with_capacity(mesh.faces.len() * 3);
+    type NormalAccum = HashMap<usize, [f32; 3]>;
 
-    for face in &mesh.faces {
-        let normal = face.normal;
-        for &idx in &face.vertices {
+    let normal_map = mesh
+        .faces
+        .par_iter()
+        .map(|face| {
+            let normal = [
+                face.normal[0] as f32,
+                face.normal[1] as f32,
+                face.normal[2] as f32,
+            ];
+            let mut map = NormalAccum::new();
+            for &idx in &face.vertices {
+                map.entry(idx)
+                    .and_modify(|acc_normal| {
+                        acc_normal[0] += normal[0];
+                        acc_normal[1] += normal[1];
+                        acc_normal[2] += normal[2];
+                    })
+                    .or_insert(normal);
+            }
+            map
+        })
+        .reduce(
+            || NormalAccum::new(),
+            |mut acc, map| {
+                for (idx, normal) in map {
+                    acc.entry(idx)
+                        .and_modify(|acc_normal| {
+                            acc_normal[0] += normal[0];
+                            acc_normal[1] += normal[1];
+                            acc_normal[2] += normal[2];
+                        })
+                        .or_insert(normal);
+                }
+                acc
+            },
+        );
+
+    let points_with_normals: Vec<PointWithNormal> = normal_map
+        .into_par_iter()
+        .map(|(idx, summed_normal)| {
+            let magnitude =
+                (summed_normal[0].powi(2) + summed_normal[1].powi(2) + summed_normal[2].powi(2))
+                    .sqrt();
+            let normalized_normal = if magnitude != 0.0 {
+                [
+                    summed_normal[0] / magnitude,
+                    summed_normal[1] / magnitude,
+                    summed_normal[2] / magnitude,
+                ]
+            } else {
+                [0.0, 0.0, 0.0]
+            };
+
             let vertex = vertices[idx];
-            points_with_normals.push(PointWithNormal {
-                point: [vertex[0] as f64, vertex[1] as f64, vertex[2] as f64],
-                normal: [normal[0] as f64, normal[1] as f64, normal[2] as f64],
-            });
-        }
-    }
+            PointWithNormal {
+                point: [vertex[0] as f32, vertex[1] as f32, vertex[2] as f32],
+                normal: normalized_normal,
+            }
+        })
+        .collect();
 
+    println!("Reading STL took {:?}", t.elapsed());
     Ok(points_with_normals)
 }
 
@@ -39,75 +94,87 @@ fn fast_grid_sampling(
     points_with_normals: Vec<PointWithNormal>,
     clusters: usize,
 ) -> Vec<PointWithNormal> {
-    let mut rng = thread_rng();
-
+    let t = std::time::Instant::now();
     let min_x = points_with_normals
-        .iter()
+        .par_iter()
         .map(|p| p.point[0])
-        .fold(f64::INFINITY, f64::min);
+        .reduce_with(f32::min)
+        .unwrap_or(f32::INFINITY);
     let max_x = points_with_normals
-        .iter()
+        .par_iter()
         .map(|p| p.point[0])
-        .fold(f64::NEG_INFINITY, f64::max);
+        .reduce(|| f32::NEG_INFINITY, f32::max);
+
     let min_y = points_with_normals
-        .iter()
+        .par_iter()
         .map(|p| p.point[1])
-        .fold(f64::INFINITY, f64::min);
+        .reduce(|| f32::INFINITY, f32::min);
     let max_y = points_with_normals
-        .iter()
+        .par_iter()
         .map(|p| p.point[1])
-        .fold(f64::NEG_INFINITY, f64::max);
+        .reduce(|| f32::NEG_INFINITY, f32::max);
+
     let min_z = points_with_normals
-        .iter()
+        .par_iter()
         .map(|p| p.point[2])
-        .fold(f64::INFINITY, f64::min);
+        .reduce(|| f32::INFINITY, f32::min);
     let max_z = points_with_normals
-        .iter()
+        .par_iter()
         .map(|p| p.point[2])
-        .fold(f64::NEG_INFINITY, f64::max);
+        .reduce(|| f32::NEG_INFINITY, f32::max);
 
-    let grid_size = ((clusters as f64).powf(1.0 / 3.0)).ceil() as usize;
-    let mut grid: Vec<Vec<PointWithNormal>> = vec![Vec::new(); grid_size * grid_size * grid_size];
+    let grid_size = ((clusters as f32).powf(1.0 / 3.0)).ceil() as usize;
 
-    let get_grid_index = |x: f64, y: f64, z: f64| -> usize {
-        let gx = ((x - min_x) / (max_x - min_x + f64::EPSILON) * grid_size as f64).floor() as usize;
-        let gy = ((y - min_y) / (max_y - min_y + f64::EPSILON) * grid_size as f64).floor() as usize;
-        let gz = ((z - min_z) / (max_z - min_z + f64::EPSILON) * grid_size as f64).floor() as usize;
+    let grid = DashMap::new();
+
+    let get_grid_index = |x: f32, y: f32, z: f32| -> usize {
+        let gx = ((x - min_x) / (max_x - min_x + f32::EPSILON) * grid_size as f32).floor() as usize;
+        let gy = ((y - min_y) / (max_y - min_y + f32::EPSILON) * grid_size as f32).floor() as usize;
+        let gz = ((z - min_z) / (max_z - min_z + f32::EPSILON) * grid_size as f32).floor() as usize;
         gx.min(grid_size - 1)
             + gy.min(grid_size - 1) * grid_size
             + gz.min(grid_size - 1) * grid_size * grid_size
     };
 
-    for point_with_normal in points_with_normals.clone() {
-        let index = get_grid_index(
-            point_with_normal.point[0],
-            point_with_normal.point[1],
-            point_with_normal.point[2],
-        );
-        grid[index].push(point_with_normal);
-    }
+    points_with_normals
+        .par_iter()
+        .for_each(|point_with_normal| {
+            let index = get_grid_index(
+                point_with_normal.point[0],
+                point_with_normal.point[1],
+                point_with_normal.point[2],
+            );
+            grid.entry(index)
+                .or_insert_with(Vec::new)
+                .push(point_with_normal.clone());
+        });
 
-    let mut selected_points = Vec::new();
-    for cell in grid.into_iter() {
-        if !cell.is_empty() {
-            let point_with_normal = cell.choose(&mut rng).unwrap();
-            selected_points.push(point_with_normal.clone());
-        }
-        if selected_points.len() >= clusters {
-            break;
-        }
-    }
+    let mut selected_points: Vec<PointWithNormal> = grid
+        .iter()
+        .filter_map(|entry| {
+            let mut rng = thread_rng();
+            let cell = entry.value();
+            if !cell.is_empty() {
+                Some(cell.choose(&mut rng).unwrap().clone())
+            } else {
+                None
+            }
+        })
+        .collect();
 
-    while selected_points.len() < clusters {
-        if let Some(point_with_normal) = points_with_normals.choose(&mut rng) {
-            selected_points.push(point_with_normal.clone());
-        }
-    }
-
+    let mut rng = thread_rng();
     if selected_points.len() > clusters {
         selected_points.shuffle(&mut rng);
         selected_points.truncate(clusters);
+    } else {
+        while selected_points.len() < clusters {
+            if let Some(point_with_normal) = points_with_normals.choose(&mut rng) {
+                selected_points.push(point_with_normal.clone());
+            }
+        }
     }
+
+    println!("Fast grid sampling took {:?}", t.elapsed());
 
     selected_points
 }
@@ -116,21 +183,18 @@ fn fast_grid_sampling(
 fn reduce_stl_points(
     file_path: PathBuf,
     clusters: usize,
-) -> PyResult<(Vec<[f64; 3]>, Vec<[f64; 3]>)> {
+) -> PyResult<(Vec<[f32; 3]>, Vec<[f32; 3]>)> {
     let points_with_normals = read_stl_points(file_path).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Ошибка чтения STL-файла: {}", e))
     })?;
 
     let resampled_points_with_normals = fast_grid_sampling(points_with_normals, clusters);
 
-    let points: Vec<[f64; 3]> = resampled_points_with_normals
-        .iter()
-        .map(|p| p.point)
-        .collect();
-    let normals: Vec<[f64; 3]> = resampled_points_with_normals
-        .iter()
-        .map(|p| p.normal)
-        .collect();
+    let (points, normals): (Vec<_>, Vec<_>) = resampled_points_with_normals
+        .par_iter()
+        .map(|p| (p.point, p.normal))
+        .unzip();
+
     Ok((points, normals))
 }
 

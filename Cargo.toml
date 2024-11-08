@@ -1,6 +1,6 @@
 [package]
 name = "stl-reducer"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["vffuunnyy <vffuunnyy@gmail.com>"]
 edition = "2018"
 
@@ -18,3 +18,5 @@ crate-type = ["cdylib"]
 stl_io = "0.8.2"
 rand = "0.8.4"
 pyo3 = { version = "0.22.6", features = ["extension-module"] }
+rayon = "1.7"
+dashmap = "6.1.0"
