@@ -4,6 +4,12 @@ version = "0.1.0"
 authors = ["vffuunnyy <vffuunnyy@gmail.com>"]
 edition = "2018"
 
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = "z"
+strip = "symbols"
+
 [lib]
 name = "stl_reducer"
 crate-type = ["cdylib"]
