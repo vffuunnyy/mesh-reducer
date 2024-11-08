@@ -3,13 +3,13 @@ from typing import List, Tuple
 
 def reduce_stl_points(
     stl_file_path: Path, clusters: int
-) -> List[Tuple[float, float, float]]:
-    """Reads an STL file and reduces the number of points.
+) -> Tuple[List[Tuple[float, float, float]], List[Tuple[float, float, float]]]:
+    """Reduces the number of points in an STL file using fast grid clustering.
 
     Args:
         stl_file_path (Path): Path to the STL file.
         clusters (int): Number of clusters to reduce the points to.
 
     Returns:
-        List[List[float]]: List of points in the reduced STL file.
+        Tuple[List[Tuple[float, float, float]], List[Tuple[float, float, float]]]: Two lists of tuples containing the reduced points and normals.
     """
