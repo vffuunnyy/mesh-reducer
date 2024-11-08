@@ -1,0 +1,36 @@
+[project]
+name = "stl-reducer"
+dynamic = ["version"]
+description = "A Python package for reading STL files and extracting points"
+authors = [{ name = "vffuunnyy", email = "vffuunnyy@gmail.com" }]
+license = "MIT"
+keywords = ["stl", "reducer", "python", "rust", "pyo3", "grid", "voxel"]
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Internet :: WWW/HTTP",
+]
+
+[project.urls]
+Homepage = "https://github.com/vffuunnyy/stl_reducer/"
+Documentation = "https://github.com/vffuunnyy/stl_reducer/"
+Repository = "https://github.com/vffuunnyy/stl_reducer.git"
+Issues = "https://github.com/vffuunnyy/stl_reducer/issues"
+
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]

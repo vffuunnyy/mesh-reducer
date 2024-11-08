@@ -1,0 +1,14 @@
+[package]
+name = "stl-reducer"
+version = "0.1.0"
+authors = ["vffuunnyy <vffuunnyy@gmail.com>"]
+edition = "2018"
+
+[lib]
+name = "stl_reducer"
+crate-type = ["cdylib"]
+
+[dependencies]
+stl_io = "0.8.2"
+rand = "0.8.4"
+pyo3 = { version = "0.22.6", features = ["extension-module"] }
