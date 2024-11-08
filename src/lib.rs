@@ -17,7 +17,6 @@ struct PointWithNormal {
 }
 
 fn read_stl_points(file_path: PathBuf) -> IoResult<Vec<PointWithNormal>> {
-    let t = std::time::Instant::now();
     let file = File::open(&file_path)?;
     let mut reader = BufReader::new(file);
     let mesh = read_stl(&mut reader)?;
@@ -86,7 +85,6 @@ fn read_stl_points(file_path: PathBuf) -> IoResult<Vec<PointWithNormal>> {
         })
         .collect();
 
-    println!("Reading STL took {:?}", t.elapsed());
     Ok(points_with_normals)
 }
 
@@ -94,7 +92,6 @@ fn fast_grid_sampling(
     points_with_normals: Vec<PointWithNormal>,
     clusters: usize,
 ) -> Vec<PointWithNormal> {
-    let t = std::time::Instant::now();
     let min_x = points_with_normals
         .par_iter()
         .map(|p| p.point[0])
@@ -173,8 +170,6 @@ fn fast_grid_sampling(
             }
         }
     }
-
-    println!("Fast grid sampling took {:?}", t.elapsed());
 
     selected_points
 }
