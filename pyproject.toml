@@ -1,10 +1,10 @@
 [project]
-name = "stl-reducer"
+name = "mesh-reducer"
 dynamic = ["version"]
-description = "A Python package for reading STL files and extracting points"
+description = "A Python package for reading STL, OBJ files and extracting points"
 authors = [{ name = "vffuunnyy", email = "vffuunnyy@gmail.com" }]
 license = "MIT"
-keywords = ["stl", "reducer", "python", "rust", "pyo3", "grid", "voxel"]
+keywords = ["stl", "reducer", "python", "rust", "pyo3", "grid", "voxel", "mesh", "obj"]
 readme = "README.md"
 requires-python = ">=3.9"
 classifiers = [
@@ -34,3 +34,8 @@ build-backend = "maturin"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
+
+[tool.uv]
+dev-dependencies = [
+    "pyvista>=0.44.1",
+]
