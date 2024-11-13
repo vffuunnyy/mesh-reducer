@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import List, Tuple
 
-def reduce_mesh_points(
+def load_mesh(
     file_path: Path, clusters: int
 ) -> List[Tuple[float, float, float]]:
     """Reduces the number of points in a mesh file using fast grid clustering.
@@ -14,7 +14,7 @@ def reduce_mesh_points(
         List[Tuple[float, float, float]]: A list of tuples containing the reduced points.
     """
 
-def reduce_mesh_points_multi(
+def load_meshes(
     file_paths: List[Path], clusters: int
 ) -> List[List[Tuple[float, float, float]]]:
     """Reduces the number of points in multiple mesh files using fast grid clustering.

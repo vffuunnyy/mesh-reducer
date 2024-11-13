@@ -1,7 +1,5 @@
 use crate::loader::{MeshLoader, Point};
-use stl_io::read_stl;
-use std::fs::File;
-use std::io::BufReader;
+use modelz::{Model3D, ModelFormat};
 use std::io::Result as IoResult;
 use std::path::PathBuf;
 
@@ -9,10 +7,15 @@ pub struct StlLoader;
 
 impl MeshLoader for StlLoader {
     fn load_points(file_path: PathBuf) -> IoResult<Vec<Point>> {
-        let file = File::open(&file_path)?;
-        let mut reader = BufReader::new(file);
-        let mesh = read_stl(&mut reader)?;
-        let points: Vec<Point> = mesh.vertices.iter().map(|v| [v[0], v[1], v[2]]).collect();
+        let model = Model3D::from_format(file_path, &ModelFormat::STL).expect("Failed to load");
+
+        let points: Vec<Point> = model
+            .meshes
+            .iter()
+            .flat_map(|m| m.vertices.iter())
+            .map(|v| v.position)
+            .collect();
+
         Ok(points)
     }
 }
