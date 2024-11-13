@@ -5,12 +5,12 @@ use loader::MeshLoader;
 use loader::Point;
 use loaders::{obj::ObjLoader, ply::PlyLoader, stl::StlLoader};
 
-use dashmap::DashMap;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use rayon::prelude::*;
+use std::collections::HashMap;
 use std::io::Result as IoResult;
 use std::path::PathBuf;
 
@@ -41,63 +41,75 @@ pub fn reduce_points(file_path: PathBuf, clusters: usize) -> IoResult<Vec<Point>
 }
 
 fn fast_grid_sampling(points: Vec<Point>, clusters: usize) -> Vec<Point> {
-    let (min_x, max_x, min_y, max_y, min_z, max_z) = points
-        .par_iter()
-        .map(|p| {
-            let x = p[0];
-            let y = p[1];
-            let z = p[2];
-            (x, x, y, y, z, z)
-        })
-        .reduce(
-            || {
-                (
-                    f32::INFINITY,
-                    f32::NEG_INFINITY,
-                    f32::INFINITY,
-                    f32::NEG_INFINITY,
-                    f32::INFINITY,
-                    f32::NEG_INFINITY,
-                )
-            },
-            |a, b| {
-                (
-                    a.0.min(b.0),
-                    a.1.max(b.1),
-                    a.2.min(b.2),
-                    a.3.max(b.3),
-                    a.4.min(b.4),
-                    a.5.max(b.5),
-                )
-            },
-        );
+    let (min_x, max_x, min_y, max_y, min_z, max_z) = points.iter().fold(
+        (
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ),
+        |(min_x, max_x, min_y, max_y, min_z, max_z), p| {
+            (
+                min_x.min(p[0]),
+                max_x.max(p[0]),
+                min_y.min(p[1]),
+                max_y.max(p[1]),
+                min_z.min(p[2]),
+                max_z.max(p[2]),
+            )
+        },
+    );
 
     let grid_size = ((clusters as f32).powf(1.0 / 3.0)).ceil() as usize;
-
-    let grid = DashMap::with_capacity(clusters);
 
     let denom_x = max_x - min_x + f32::EPSILON;
     let denom_y = max_y - min_y + f32::EPSILON;
     let denom_z = max_z - min_z + f32::EPSILON;
 
+    let inv_denom_x = 1.0 / denom_x;
+    let inv_denom_y = 1.0 / denom_y;
+    let inv_denom_z = 1.0 / denom_z;
+
+    let grid_size_f32 = grid_size as f32;
+
+    let scale_x = grid_size_f32 * inv_denom_x;
+    let scale_y = grid_size_f32 * inv_denom_y;
+    let scale_z = grid_size_f32 * inv_denom_z;
+
     let get_grid_index = |x: f32, y: f32, z: f32| -> usize {
-        let gx = ((x - min_x) / denom_x * grid_size as f32).floor() as usize;
-        let gy = ((y - min_y) / denom_y * grid_size as f32).floor() as usize;
-        let gz = ((z - min_z) / denom_z * grid_size as f32).floor() as usize;
+        let gx = ((x - min_x) * scale_x).floor() as usize;
+        let gy = ((y - min_y) * scale_y).floor() as usize;
+        let gz = ((z - min_z) * scale_z).floor() as usize;
         let gx = gx.min(grid_size - 1);
         let gy = gy.min(grid_size - 1);
         let gz = gz.min(grid_size - 1);
         gx + gy * grid_size + gz * grid_size * grid_size
     };
 
-    points.par_iter().for_each(|&point| {
-        let index = get_grid_index(point[0], point[1], point[2]);
-        grid.entry(index).or_insert_with(Vec::new).push(point);
-    });
+    let grid = points
+        .par_iter()
+        .fold(
+            || HashMap::new(),
+            |mut acc, &point| {
+                let index = get_grid_index(point[0], point[1], point[2]);
+                acc.entry(index).or_insert_with(Vec::new).push(point);
+                acc
+            },
+        )
+        .reduce(
+            || HashMap::new(),
+            |mut acc, map| {
+                for (k, v) in map {
+                    acc.entry(k).or_insert_with(Vec::new).extend(v);
+                }
+                acc
+            },
+        );
 
     let mut selected_points: Vec<Point> = grid
-        .into_iter()
-        .par_bridge()
+        .into_par_iter()
         .filter_map(|(_key, cell)| {
             let mut rng = thread_rng();
             if !cell.is_empty() {

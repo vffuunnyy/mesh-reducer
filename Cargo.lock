@@ -357,7 +357,7 @@ dependencies = [
 
 [[package]]
 name = "mesh-reducer"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "dashmap",
  "modelz",
