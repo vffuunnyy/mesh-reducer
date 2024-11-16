@@ -7,7 +7,8 @@ pub struct PlyLoader;
 
 impl MeshLoader for PlyLoader {
     fn load_points(file_path: PathBuf) -> IoResult<Vec<Point>> {
-        let model = Model3D::from_format(file_path, &ModelFormat::PLY).expect("Failed to load");
+        let model = Model3D::from_format(&file_path, &ModelFormat::PLY)
+            .expect(format!("Failed to load {:?}", file_path).as_str());
 
         let points: Vec<Point> = model
             .meshes

@@ -7,7 +7,8 @@ pub struct StlLoader;
 
 impl MeshLoader for StlLoader {
     fn load_points(file_path: PathBuf) -> IoResult<Vec<Point>> {
-        let model = Model3D::from_format(file_path, &ModelFormat::STL).expect("Failed to load");
+        let model = Model3D::from_format(&file_path, &ModelFormat::STL)
+            .expect(format!("Failed to load {:?}", file_path).as_str());
 
         let points: Vec<Point> = model
             .meshes
