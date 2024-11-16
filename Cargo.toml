@@ -1,6 +1,6 @@
 [package]
 name = "mesh-reducer"
-version = "1.0.3"
+version = "1.0.4"
 authors = ["vffuunnyy <vffuunnyy@gmail.com>"]
 edition = "2018"
 
