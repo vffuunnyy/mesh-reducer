@@ -6,8 +6,8 @@ use std::path::PathBuf;
 pub struct ObjLoader;
 
 impl MeshLoader for ObjLoader {
-    fn load_points(file_path: PathBuf) -> IoResult<Vec<Point>> {
-        let model = Model3D::from_format(&file_path, &ModelFormat::OBJ)
+    fn load_points(file_path: &PathBuf) -> IoResult<Vec<Point>> {
+        let model = Model3D::from_format(file_path, &ModelFormat::OBJ)
             .expect(format!("Failed to load {:?}", file_path).as_str());
 
         let points: Vec<Point> = model

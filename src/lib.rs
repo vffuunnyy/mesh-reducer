@@ -1,10 +1,14 @@
 mod loader;
 mod loaders;
+mod progess;
 
 use loader::MeshLoader;
 use loader::Point;
 use loaders::{obj::ObjLoader, ply::PlyLoader, stl::StlLoader};
 
+use indicatif::ParallelProgressIterator;
+
+use progess::create_progess;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 use rand::seq::SliceRandom;
@@ -15,14 +19,14 @@ use std::io::Result as IoResult;
 use std::path::PathBuf;
 
 fn reduce_points_with_loader<L: MeshLoader>(
-    file_path: PathBuf,
+    file_path: &PathBuf,
     clusters: usize,
 ) -> IoResult<Vec<Point>> {
     let points = L::load_points(file_path)?;
     Ok(fast_grid_sampling(points, clusters))
 }
 
-pub fn reduce_points(file_path: PathBuf, clusters: usize) -> IoResult<Vec<Point>> {
+pub fn reduce_points(file_path: &PathBuf, clusters: usize) -> IoResult<Vec<Point>> {
     let extension = file_path
         .extension()
         .and_then(|ext| ext.to_str())
@@ -137,16 +141,19 @@ fn fast_grid_sampling(points: Vec<Point>, clusters: usize) -> Vec<Point> {
 
 #[pyfunction(signature = (file_path, clusters))]
 fn load_mesh(file_path: PathBuf, clusters: usize) -> PyResult<Vec<Point>> {
-    reduce_points(file_path, clusters).map_err(|e| {
+    reduce_points(&file_path, clusters).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Error reducing mesh points: {}", e))
     })
 }
 
 #[pyfunction(signature = (file_paths, clusters))]
 fn load_meshes(file_paths: Vec<PathBuf>, clusters: usize) -> PyResult<Vec<Vec<Point>>> {
+    let pb = create_progess(file_paths.len() as u64);
+
     let results: Vec<IoResult<Vec<Point>>> = file_paths
-        .into_par_iter()
-        .map(|file_path| reduce_points(file_path, clusters))
+        .par_iter()
+        .progress_with(pb)
+        .map(|file_path| reduce_points(&file_path, clusters))
         .collect();
 
     let mut points = Vec::new();
@@ -165,9 +172,58 @@ fn load_meshes(file_paths: Vec<PathBuf>, clusters: usize) -> PyResult<Vec<Vec<Po
     Ok(points)
 }
 
+#[pyfunction(signature = (file_paths, clusters_range))]
+fn load_meshes_range_points(
+    file_paths: Vec<PathBuf>,
+    mut clusters_range: Vec<usize>,
+) -> PyResult<Vec<Point>> {
+    clusters_range.sort_by(|a, b| b.cmp(a));
+
+    let total_iterations = file_paths.len() * clusters_range.len();
+    let pb = create_progess(total_iterations as u64);
+
+    let results: Vec<Point> = file_paths
+        .into_par_iter()
+        .filter_map(|file_path| {
+            let first_cluster = clusters_range.first().copied()?;
+            match reduce_points(&file_path, first_cluster) {
+                Ok(first_result) => {
+                    let sampled_results: Vec<Point> = clusters_range
+                        .par_iter()
+                        .progress_with(pb.clone())
+                        .flat_map(|&cluster| {
+                            pb.inc(1);
+                            if cluster == first_cluster {
+                                first_result.clone()
+                            } else {
+                                fast_grid_sampling(first_result.clone(), cluster)
+                            }
+                        })
+                        .collect();
+                    Some(sampled_results)
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Error reducing mesh points <File: {}>: {}",
+                        file_path.display(),
+                        e
+                    );
+                    None
+                }
+            }
+        })
+        .flatten()
+        .collect();
+
+    pb.finish_with_message("Processing complete");
+
+    Ok(results)
+}
+
 #[pymodule]
 fn mesh_reducer(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load_mesh, m)?)?;
     m.add_function(wrap_pyfunction!(load_meshes, m)?)?;
+    m.add_function(wrap_pyfunction!(load_meshes_range_points, m)?)?;
     Ok(())
 }
