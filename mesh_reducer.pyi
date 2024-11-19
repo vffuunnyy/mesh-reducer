@@ -27,7 +27,7 @@ def load_meshes(
 
 def load_meshes_range_points(
     file_paths: List[Path], clusters_range: List[int]
-) -> List[List[Tuple[float, float, float]]]:
+) -> List[List[List[Tuple[float, float, float]]]]:
     """Reduces the number of points in multiple mesh files using fast grid clustering with a range of clusters.
 
     Args:
@@ -35,5 +35,5 @@ def load_meshes_range_points(
         clusters_range (List[int]): List of cluster values to reduce the points to.
 
     Returns:
-        List[List[Tuple[float, float, float]]]: A list of lists of tuples containing the reduced points for each file.
+        List[List[List[Tuple[float, float, float]]]]: A list of lists of lists of tuples containing the reduced points for each file and each cluster value.
     """

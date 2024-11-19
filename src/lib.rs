@@ -176,48 +176,44 @@ fn load_meshes(file_paths: Vec<PathBuf>, clusters: usize) -> PyResult<Vec<Vec<Po
 fn load_meshes_range_points(
     file_paths: Vec<PathBuf>,
     mut clusters_range: Vec<usize>,
-) -> PyResult<Vec<Point>> {
+) -> PyResult<Vec<Vec<Point>>> {
     clusters_range.sort_by(|a, b| b.cmp(a));
 
     let total_iterations = file_paths.len() * clusters_range.len();
     let pb = create_progess(total_iterations as u64);
 
-    let results: Vec<Point> = file_paths
+    let points: Vec<Vec<Point>> = file_paths
         .into_par_iter()
-        .filter_map(|file_path| {
-            let first_cluster = clusters_range.first().copied()?;
-            match reduce_points(&file_path, first_cluster) {
-                Ok(first_result) => {
-                    let sampled_results: Vec<Point> = clusters_range
+        .map(|file_path| {
+            let first_cluster = clusters_range
+                .first()
+                .copied()
+                .ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "Empty clusters range")
+                })
+                .expect(format!("Error reducing mesh points <File: {:?}>", file_path).as_str());
+
+            reduce_points(&file_path, first_cluster)
+                .map(|first_result| {
+                    clusters_range
                         .par_iter()
                         .progress_with(pb.clone())
                         .flat_map(|&cluster| {
-                            pb.inc(1);
                             if cluster == first_cluster {
                                 first_result.clone()
                             } else {
                                 fast_grid_sampling(first_result.clone(), cluster)
                             }
                         })
-                        .collect();
-                    Some(sampled_results)
-                }
-                Err(e) => {
-                    eprintln!(
-                        "Error reducing mesh points <File: {}>: {}",
-                        file_path.display(),
-                        e
-                    );
-                    None
-                }
-            }
+                        .collect()
+                })
+                .expect(format!("Error reducing mesh points <File: {:?}>", file_path).as_str())
         })
-        .flatten()
         .collect();
 
     pb.finish_with_message("Processing complete");
 
-    Ok(results)
+    Ok(points)
 }
 
 #[pymodule]
