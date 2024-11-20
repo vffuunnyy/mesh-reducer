@@ -1,32 +1,39 @@
 mod loader;
 mod loaders;
+mod mesh_object;
 mod progess;
+mod sampling;
 
 use loader::MeshLoader;
-use loader::Point;
 use loaders::{obj::ObjLoader, ply::PlyLoader, stl::StlLoader};
+use sampling::fast_grid_sampling;
 
 use indicatif::ParallelProgressIterator;
 
+use mesh_object::MeshObject;
 use progess::create_progess;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use rayon::prelude::*;
-use std::collections::HashMap;
-use std::io::Result as IoResult;
 use std::path::PathBuf;
 
 fn reduce_points_with_loader<L: MeshLoader>(
     file_path: &PathBuf,
     clusters: usize,
-) -> IoResult<Vec<Point>> {
-    let points = L::load_points(file_path)?;
-    Ok(fast_grid_sampling(points, clusters))
+) -> Result<MeshObject, String> {
+    L::load_points(file_path)
+        .map_err(|e| format!("Failed to load {:?}: {:?}", file_path, e))
+        .map(|points| MeshObject {
+            name: file_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_string(),
+            points: fast_grid_sampling(points, clusters),
+        })
 }
 
-pub fn reduce_points(file_path: &PathBuf, clusters: usize) -> IoResult<Vec<Point>> {
+pub fn reduce_points(file_path: &PathBuf, clusters: usize) -> Result<MeshObject, String> {
     let extension = file_path
         .extension()
         .and_then(|ext| ext.to_str())
@@ -37,137 +44,35 @@ pub fn reduce_points(file_path: &PathBuf, clusters: usize) -> IoResult<Vec<Point
         "stl" => reduce_points_with_loader::<StlLoader>(file_path, clusters),
         "obj" => reduce_points_with_loader::<ObjLoader>(file_path, clusters),
         "ply" => reduce_points_with_loader::<PlyLoader>(file_path, clusters),
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "Unsupported file format",
-        )),
+        _ => Err(format!("Unsupported file format for file {:?}", file_path)),
     }
 }
 
-fn fast_grid_sampling(points: Vec<Point>, clusters: usize) -> Vec<Point> {
-    let (min_x, max_x, min_y, max_y, min_z, max_z) = points.iter().fold(
-        (
-            f32::INFINITY,
-            f32::NEG_INFINITY,
-            f32::INFINITY,
-            f32::NEG_INFINITY,
-            f32::INFINITY,
-            f32::NEG_INFINITY,
-        ),
-        |(min_x, max_x, min_y, max_y, min_z, max_z), p| {
-            (
-                min_x.min(p[0]),
-                max_x.max(p[0]),
-                min_y.min(p[1]),
-                max_y.max(p[1]),
-                min_z.min(p[2]),
-                max_z.max(p[2]),
-            )
-        },
-    );
+#[pyfunction(signature = (file_path, clusters))]
+fn load_mesh(file_path: PathBuf, clusters: usize) -> PyResult<MeshObject> {
+    match reduce_points(&file_path, clusters) {
+        Ok(mesh) => Ok(mesh),
+        Err(e) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(e)),
+    }
+}
 
-    let grid_size = ((clusters as f32).powf(1.0 / 3.0)).ceil() as usize;
+#[pyfunction(signature = (file_paths, clusters))]
+fn load_meshes(file_paths: Vec<PathBuf>, clusters: usize) -> PyResult<Vec<MeshObject>> {
+    let pb = create_progess(file_paths.len() as u64);
 
-    let denom_x = max_x - min_x + f32::EPSILON;
-    let denom_y = max_y - min_y + f32::EPSILON;
-    let denom_z = max_z - min_z + f32::EPSILON;
-
-    let inv_denom_x = 1.0 / denom_x;
-    let inv_denom_y = 1.0 / denom_y;
-    let inv_denom_z = 1.0 / denom_z;
-
-    let grid_size_f32 = grid_size as f32;
-
-    let scale_x = grid_size_f32 * inv_denom_x;
-    let scale_y = grid_size_f32 * inv_denom_y;
-    let scale_z = grid_size_f32 * inv_denom_z;
-
-    let get_grid_index = |x: f32, y: f32, z: f32| -> usize {
-        let gx = ((x - min_x) * scale_x).floor() as usize;
-        let gy = ((y - min_y) * scale_y).floor() as usize;
-        let gz = ((z - min_z) * scale_z).floor() as usize;
-        let gx = gx.min(grid_size - 1);
-        let gy = gy.min(grid_size - 1);
-        let gz = gz.min(grid_size - 1);
-        gx + gy * grid_size + gz * grid_size * grid_size
-    };
-
-    let grid = points
+    let points: Vec<MeshObject> = file_paths
         .par_iter()
-        .fold(
-            || HashMap::new(),
-            |mut acc, &point| {
-                let index = get_grid_index(point[0], point[1], point[2]);
-                acc.entry(index).or_insert_with(Vec::new).push(point);
-                acc
-            },
-        )
-        .reduce(
-            || HashMap::new(),
-            |mut acc, map| {
-                for (k, v) in map {
-                    acc.entry(k).or_insert_with(Vec::new).extend(v);
-                }
-                acc
-            },
-        );
-
-    let mut selected_points: Vec<Point> = grid
-        .into_par_iter()
-        .filter_map(|(_key, cell)| {
-            let mut rng = thread_rng();
-            if !cell.is_empty() {
-                Some(*cell.choose(&mut rng).unwrap())
-            } else {
+        .progress_with(pb.clone())
+        .filter_map(|file_path| match reduce_points(&file_path, clusters) {
+            Ok(mesh) => Some(mesh),
+            Err(e) => {
+                eprintln!("Warning: {}", e);
                 None
             }
         })
         .collect();
 
-    let mut rng = thread_rng();
-    if selected_points.len() > clusters {
-        selected_points.shuffle(&mut rng);
-        selected_points.truncate(clusters);
-    } else {
-        while selected_points.len() < clusters {
-            if let Some(&point) = points.choose(&mut rng) {
-                selected_points.push(point);
-            }
-        }
-    }
-
-    selected_points
-}
-
-#[pyfunction(signature = (file_path, clusters))]
-fn load_mesh(file_path: PathBuf, clusters: usize) -> PyResult<Vec<Point>> {
-    reduce_points(&file_path, clusters).map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Error reducing mesh points: {}", e))
-    })
-}
-
-#[pyfunction(signature = (file_paths, clusters))]
-fn load_meshes(file_paths: Vec<PathBuf>, clusters: usize) -> PyResult<Vec<Vec<Point>>> {
-    let pb = create_progess(file_paths.len() as u64);
-
-    let results: Vec<IoResult<Vec<Point>>> = file_paths
-        .par_iter()
-        .progress_with(pb)
-        .map(|file_path| reduce_points(&file_path, clusters))
-        .collect();
-
-    let mut points = Vec::new();
-    for result in results {
-        match result {
-            Ok(p) => points.push(p),
-            Err(e) => {
-                return Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                    "Error reducing mesh points: {}",
-                    e
-                )))
-            }
-        }
-    }
+    pb.finish_with_message("Processing complete");
 
     Ok(points)
 }
@@ -176,42 +81,68 @@ fn load_meshes(file_paths: Vec<PathBuf>, clusters: usize) -> PyResult<Vec<Vec<Po
 fn load_meshes_range_points(
     file_paths: Vec<PathBuf>,
     mut clusters_range: Vec<usize>,
-) -> PyResult<Vec<Vec<Point>>> {
-    clusters_range.sort_by(|a, b| b.cmp(a));
+) -> PyResult<Vec<MeshObject>> {
+    if clusters_range.is_empty() {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "clusters_range cannot be empty",
+        ));
+    }
+
+    clusters_range.sort_unstable_by(|a, b| b.cmp(a));
 
     let total_iterations = file_paths.len() * clusters_range.len();
     let pb = create_progess(total_iterations as u64);
 
-    let points: Vec<Vec<Point>> = file_paths
-        .into_par_iter()
-        .map(|file_path| {
-            let first_cluster = clusters_range
-                .first()
-                .copied()
-                .ok_or_else(|| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "Empty clusters range")
-                })
-                .expect(format!("Error reducing mesh points <File: {:?}>", file_path).as_str());
+    use std::sync::Mutex;
+    let pb = Mutex::new(pb);
 
-            reduce_points(&file_path, first_cluster)
-                .map(|first_result| {
-                    clusters_range
-                        .par_iter()
-                        .progress_with(pb.clone())
-                        .flat_map(|&cluster| {
-                            if cluster == first_cluster {
-                                first_result.clone()
-                            } else {
-                                fast_grid_sampling(first_result.clone(), cluster)
-                            }
+    let points: Vec<MeshObject> = file_paths
+        .par_iter()
+        .filter_map(|file_path| {
+            let first_cluster = match clusters_range.first() {
+                Some(&c) => c,
+                None => {
+                    eprintln!("Empty clusters range");
+                    return None;
+                }
+            };
+
+            let first_result = match reduce_points(file_path, first_cluster) {
+                Ok(mesh) => mesh,
+                Err(e) => {
+                    eprintln!("Warning: {}", e);
+                    return None;
+                }
+            };
+
+            let mesh_objects: Vec<MeshObject> = clusters_range
+                .par_iter()
+                .filter_map(|&cluster| {
+                    {
+                        pb.lock().unwrap().inc(1);
+                    }
+
+                    if cluster == first_cluster {
+                        Some(first_result.clone())
+                    } else {
+                        Some(MeshObject {
+                            name: first_result.name.clone(),
+                            points: fast_grid_sampling(first_result.points.clone(), cluster),
                         })
-                        .collect()
+                    }
                 })
-                .expect(format!("Error reducing mesh points <File: {:?}>", file_path).as_str())
+                .collect();
+
+            Some(mesh_objects)
         })
+        .flatten()
         .collect();
 
-    pb.finish_with_message("Processing complete");
+    {
+        pb.lock()
+            .unwrap()
+            .finish_with_message("Processing complete");
+    }
 
     Ok(points)
 }

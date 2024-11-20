@@ -1,22 +1,23 @@
 use crate::loader::{MeshLoader, Point};
-use modelz::{Model3D, ModelFormat};
-use std::io::Result as IoResult;
+use modelz::{Model3D, ModelError, ModelFormat};
 use std::path::PathBuf;
 
 pub struct PlyLoader;
 
 impl MeshLoader for PlyLoader {
-    fn load_points(file_path: &PathBuf) -> IoResult<Vec<Point>> {
-        let model = Model3D::from_format(file_path, &ModelFormat::PLY)
-            .expect(format!("Failed to load {:?}", file_path).as_str());
+    fn load_points(file_path: &PathBuf) -> Result<Vec<Point>, ModelError> {
+        let model = Model3D::from_format(file_path, &ModelFormat::PLY);
 
-        let points: Vec<Point> = model
+        if let Err(e) = model {
+            return Err(e);
+        }
+
+        Ok(model
+            .unwrap()
             .meshes
             .iter()
             .flat_map(|m| m.vertices.iter())
             .map(|v| v.position)
-            .collect();
-
-        Ok(points)
+            .collect())
     }
 }
