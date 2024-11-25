@@ -152,5 +152,7 @@ fn mesh_reducer(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load_mesh, m)?)?;
     m.add_function(wrap_pyfunction!(load_meshes, m)?)?;
     m.add_function(wrap_pyfunction!(load_meshes_range_points, m)?)?;
+    m.add_class::<MeshObject>()?;
+    
     Ok(())
 }
