@@ -37,5 +37,6 @@ features = ["pyo3/extension-module"]
 
 [tool.uv]
 dev-dependencies = [
+    "maturin>=1.7.4",
     "pyvista>=0.44.1",
 ]

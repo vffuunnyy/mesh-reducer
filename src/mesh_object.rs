@@ -11,3 +11,11 @@ pub struct MeshObject {
     #[pyo3(get)]
     pub points: Vec<Point>,
 }
+
+#[pymethods]
+impl MeshObject {
+    #[new]
+    fn new(name: String, points: Vec<Point>) -> Self {
+        MeshObject { name, points }
+    }
+}
